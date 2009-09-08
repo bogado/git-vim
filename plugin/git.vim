@@ -22,6 +22,10 @@ if !exists('g:git_highlight_blame')
     let g:git_highlight_blame = 0
 endif
 
+if !exists('g:git_status_show_options')
+    let g:git_status_show_options = 0
+endif
+
 if !exists('g:git_no_map_default') || !g:git_no_map_default
     nnoremap <Leader>gd :GitDiff<Enter>
     nnoremap <Leader>gD :GitDiff --cached<Enter>
@@ -29,8 +33,12 @@ if !exists('g:git_no_map_default') || !g:git_no_map_default
     nnoremap <Leader>gl :GitLog<Enter>
     nnoremap <Leader>ga :GitAdd<Enter>
     nnoremap <Leader>gA :GitAdd <cfile><Enter>
+    nnoremap <Leader>gr :GitRm<Enter>
+    nnoremap <Leader>gR :GitRm <cfile><Enter>
     nnoremap <Leader>gc :GitCommit<Enter>
+    nnoremap <Leader>gb :GitBlame<Enter>
     nnoremap <Leader>gp :GitPullRebase<Enter>
+    nnoremap <Leader>gg :GitGrep -e '<C-R>=getreg('/')<Enter>'<Enter>
 endif
 
 " Ensure b:git_dir exists.
@@ -60,6 +68,7 @@ function! GetGitBranch()
         else
             return matchstr(lines[0], 'refs/heads/\zs.\+$')
         endif
+
     else
         return ''
     endif
@@ -113,7 +122,24 @@ endfunction
 
 " Show diff.
 function! GitDiff(args)
-    let git_output = s:SystemGit('diff ' . a:args . ' -- ' . s:Expand('%'))
+
+    let myfile = ""
+    let processed_args = ""
+
+    " Anything not starting with a - is likely the file name 
+    let words = split(a:args)
+    for word in words
+        if word !~ '^-'
+            let myfile = word
+        else
+            let processed_args = processed_args . " " . word
+        endif
+    endfor
+
+    " If no filenames were sent in the arguments 
+    let myfile = s:Expand(strlen(myfile) ? myfile : '%')
+    let diff_command = 'diff ' . processed_args . ' -- ' . myfile
+    let git_output = s:SystemGit(diff_command)
     if !strlen(git_output)
         echo "No output from git command"
         return
@@ -149,17 +175,48 @@ function! CompleteGitDiffCmd(arg_lead, cmd_line, cursor_pos)
     return filter(opts, 'match(v:val, ''\v'' . a:arg_lead) == 0')
 endfunction
 
-" Show Status.
+" Show Status.  This is an interactive buffer geared towards quickly modifying
+" the staging area and creating commits.
 function! GitStatus(args)
     if len(a:args)
         echoe 'GitStatus ignores arguments'
     endif
-    let git_output = s:SystemGit('status')
+
+    if g:git_status_show_options == 1
+        let instructions =  "git-vim GitStatus\n\n"
+
+        let instructions .= "add    = a or Enter        edit             = e\n"
+        let instructions .= "diff   = d                 switch to commit = c\n"
+        let instructions .= "remove = r                 close window     = q\n"
+        let instructions .= "reset  = -                 hide options     = ?\n"
+        let instructions .= "\n"
+    else
+        let instructions = "git-vim GitStatus --- type ? for options\n\n"
+    endif
+
+    let git_output = instructions . s:SystemGit('status')
     call <SID>OpenGitBuffer(git_output)
     setlocal filetype=git-status
-    nnoremap <buffer> <Enter> :GitAdd <cfile><Enter>:call <SID>RefreshGitStatus()<Enter>
-    nnoremap <buffer> d       :GitDiff <cfile><Enter>:call <SID>RefreshGitStatus()<Enter>
-    nnoremap <buffer> -       :silent !git reset HEAD -- =expand('<cfile>')<Enter><Enter>:call <SID>RefreshGitStatus()<Enter>
+
+    " The first time the buffer is opened, move the cursor to a reasonable place
+    " This could be better if someone knows how to move it to the first
+    " non-staged change.
+    normal jjjj
+
+    nnoremap <buffer> <Enter> $:GitAdd  <cfile><Enter>:call <SID>RefreshGitStatus()<Enter>
+    nnoremap <buffer> a       $:GitAdd  <cfile><Enter>:call <SID>RefreshGitStatus()<Enter>
+    nnoremap <buffer> d       $:GitDiff <cfile><Enter>
+    nnoremap <buffer> r       $:GitRm   <cfile><Enter>:call <SID>RefreshGitStatus()<Enter>
+    nnoremap <buffer> -       $:silent  !git reset HEAD -- =expand('<cfile>')<Enter><Enter>:call <SID>RefreshGitStatus()<Enter>
+    nnoremap <buffer> e       $:e       <cfile><Enter>
+    nnoremap <buffer> c       :q<Enter>:GitCommit<Enter>i
+    nnoremap <buffer> q       :q<Enter>
+
+    if g:git_status_show_options == 1
+        nmap <buffer> ? :let g:git_status_show_options = 0<Enter>:call <SID>RefreshGitStatus()<Enter>
+    else
+        nmap <buffer> ? :let g:git_status_show_options = 1<Enter>:call <SID>RefreshGitStatus()<Enter>
+    endif
 endfunction
 
 function! s:RefreshGitStatus()
@@ -236,6 +293,13 @@ function! CompleteGitAddCmd(arg_lead, cmd_line, cursor_pos)
     return filter(opts, 'match(v:val, ''\v'' . a:arg_lead) == 0')
 endfunction
 
+" Stage a file for removal
+function! GitRm(expr)
+    let file = s:Expand(strlen(a:expr) ? a:expr : '%')
+
+    call GitDoCommand('rm ' . file)
+endfunction
+
 " Commit.
 function! GitCommit(args)
     let git_dir = <SID>GetGitDir()
@@ -246,11 +310,17 @@ function! GitCommit(args)
         let args .= ' -a'
     endif
 
-    if args !~ '\v\k<!-([mcCF]>|-message=|-reuse-message=|-reedit-message=|-file=)'
-        " no need to ask the user for a message, we have one
-        execute '!' . g:git_bin . ' commit ' . args
-        return
-    endif
+    " [tag:error:gem] This code does not work correctly.  It's possible that it
+    " needs to be changed to
+    " if args =~
+    " instead of
+    " if args !~
+    "
+    "if args !~ '\v\k<!-([mcCF]>|-message=|-reuse-message=|-reedit-message=|-file=)'
+    "    " no need to ask the user for a message, we have one
+    "    execute '!' . g:git_bin . ' commit ' . args
+    "    return
+    "endif
 
     " Create COMMIT_EDITMSG file
     let editor_save = $EDITOR
@@ -443,6 +513,34 @@ function! s:SystemGit(args)
     return system(g:git_bin . ' ' . a:args . '< /dev/null')
 endfunction
 
+" Show vimdiff with another revision of the file
+function! GitVimDiff(rev)
+    let dir = s:SystemGit('rev-parse --show-prefix')
+    let file = s:Expand('%')
+    if strlen(dir)
+        if dir[-1:] == "\n"
+            let path = dir[0:-2]
+        endif
+        let path .= file
+    else
+        let path = file
+    endif
+    if !strlen(a:rev)
+        let object = 'HEAD:' . path
+    else
+        let object = a:rev . ':' . path
+    endif
+
+    let filetype = &filetype
+    diffthis
+    vertical new
+    let b:is_git_msg_buffer = 1
+    let content = s:SystemGit('show ' . object)
+    call <SID>OpenGitBuffer(content)
+    let &filetype = filetype
+    diffthis
+endfunction
+
 " Show vimdiff for merge. (experimental)
 function! GitVimDiffMerge()
     let file = s:Expand('%')
@@ -567,10 +665,12 @@ command! -nargs=1 -complete=customlist,CompleteGitCheckoutCmd GitCheckout       
 command! -nargs=* -complete=customlist,CompleteGitDiffCmd     GitDiff             call GitDiff(<q-args>)
 command! -nargs=*                                             GitStatus           call GitStatus(<q-args>)
 command! -nargs=? -complete=customlist,CompleteGitAddCmd      GitAdd              call GitAdd(<f-args>)
+command! -nargs=? GitRm               call GitRm(<q-args>)
 command! -nargs=* GitLog              call GitLog(<q-args>)
 command! -nargs=* GitCommit           call GitCommit(<q-args>)
 command! -nargs=1 GitCatFile          call GitCatFile(<q-args>)
 command!          GitBlame            call GitBlame()
+command! -nargs=? GitVimDiff          call GitVimDiff(<q-args>)
 command!          GitVimDiffMerge     call GitVimDiffMerge()
 command!          GitVimDiffMergeDone call GitVimDiffMergeDone()
 command! -nargs=* GitPull             call GitPull(<q-args>)
