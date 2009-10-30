@@ -194,7 +194,7 @@ endfunction
 " use git-grep
 function! GitGrep(args)
   setlocal grepprg=git\ grep\ -n\ $*
-  grep args
+  execute "grep" a:args 
 endfunction
 
 function! GitSvnRebase()
@@ -368,7 +368,7 @@ command!          GitVimDiffMergeDone call GitVimDiffMergeDone()
 command! -nargs=* GitPull             call GitPull(<q-args>)
 command!          GitPullRebase       call GitPull('--rebase')
 command! -nargs=* GitPush             call GitPush(<q-args>)
-command! -nargs=* GitGrep             call GitGrep(<q-args>)
+command! -nargs=+ GitGrep             call GitGrep(<q-args>)
 command!          GitSvnRebase        call GitSvnRebase()
 command!          GitSvnDcommit       call GitSvnDcommit()
 
