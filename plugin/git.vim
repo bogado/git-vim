@@ -332,9 +332,9 @@ endfunction
 
 function! s:Expand(expr)
     if has('win32')
-        return substitute(expand(a:expr), '\', '/', 'g')
+        return shellescape(substitute(expand(a:expr), '\', '/', 'g'))
     else
-        return expand(a:expr)
+        return shellescape(expand(a:expr))
     endif
 endfunction
 
