@@ -401,6 +401,22 @@ function! GitCatFile(file)
     call <SID>OpenGitBuffer(git_output)
 endfunction
 
+" use git-grep
+function! GitGrep(args)
+  setlocal grepprg=git\ grep\ -n\ $*
+  execute "grep" a:args 
+endfunction
+
+function! GitSvnRebase()
+    let git_output = s:SystemGit('svn rebase')
+    call <SID>OpenGitBuffer(git_output)
+endfunction
+
+function! GitSvnDcommit()
+    let git_output = s:SystemGit('svn dcommit')
+    call <SID>OpenGitBuffer(git_output)
+endfunction
+
 " Show revision and author for each line.
 function! GitBlame()
     let git_output = s:SystemGit('blame -- ' . expand('%'))
@@ -686,12 +702,15 @@ command! -nargs=* GitCommit           call GitCommit(<q-args>)
 command! -nargs=1 GitCatFile          call GitCatFile(<q-args>)
 command!          GitBlame            call GitBlame()
 command! -nargs=? GitVimDiff          call GitVimDiff(<q-args>)
+command! -nargs=+ Git                 call GitDoCommand(<q-args>)
 command!          GitVimDiffMerge     call GitVimDiffMerge()
 command!          GitVimDiffMergeDone call GitVimDiffMergeDone()
 command! -nargs=* GitPull             call GitPull(<q-args>)
 command!          GitPullRebase       call GitPull('--rebase')
 command! -nargs=* GitPush             call GitPush(<q-args>)
-command! -nargs=* GitGrep             call GitGrep(<q-args>)
+command! -nargs=+ GitGrep             call GitGrep(<q-args>)
+command!          GitSvnRebase        call GitSvnRebase()
+command!          GitSvnDcommit       call GitSvnDcommit()
 
 command! -nargs=+ -complete=customlist,CompleteGitCmd         Git                 call Git(<q-args>)
 cabbrev git <c-r>=(getcmdtype()==':' && getcmdpos()==1 ? 'Git' : 'git')<CR>
