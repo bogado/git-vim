@@ -26,6 +26,10 @@ if !exists('g:git_highlight_blame')
     let g:git_highlight_blame = 0
 endif
 
+if !exists('g:git_blame_width')
+    let g:git_blame_width = 20
+endif
+
 if !exists('g:git_status_show_options')
     let g:git_status_show_options = 0
 endif
@@ -127,22 +131,9 @@ endfunction
 " Show diff.
 function! GitDiff(args)
 
-    let myfile = ""
-    let processed_args = ""
+    let [opts, files] = GitParseOptsAndFiles(a:args)
+    let diff_command = 'diff ' . join(opts) . ' -- ' . join(files)
 
-    " Anything not starting with a - is likely the file name 
-    let words = split(a:args)
-    for word in words
-        if word !~ '^-'
-            let myfile = word
-        else
-            let processed_args = processed_args . " " . word
-        endif
-    endfor
-
-    " If no filenames were sent in the arguments 
-    let myfile = s:Expand(strlen(myfile) ? myfile : '%')
-    let diff_command = 'diff ' . processed_args . ' -- ' . myfile
     let git_output = s:SystemGit(diff_command)
     if !strlen(git_output)
         echo "No output from git command"
@@ -248,33 +239,52 @@ function! GitGrep(args)
     call <SID>OpenGitGrepQuickFix(git_output)
 endfunction
 
-
-" Add file to index.
-function! GitAdd(expr)
-    let args = []
-    let interactive = 0
+" Split complex git command lines, like:
+" GitAdd -opt1 -opt2 -- filename1 filename2
+" into an array of option and file arrays
+function! GitParseOptsAndFiles(expr)
+    let opts = []
+    let files = []
     if strlen(a:expr)
         let lookForOptions = 1
         for item in s:SplitCmd(a:expr)
             if lookForOptions && item =~ '^[''"]*-'
-                if item =~ '\v^[''"]*-(i|p|-interactive|-patch)'
-                    let interactive = 1
-                elseif item =~ '^[''"]*--[''"]*$'
+                if item =~ '^[''"]*--[''"]*$'
                     let lookForOptions = 0
+                else
+                    let opts += [ item ]
                 endif
-                let args += [ item ]
             else
-                let args += [ s:Expand(item) ]
+                let files += [ s:Expand(item) ]
             endif
         endfor
     else
-        let args += [ s:Expand('%') ]
+        let files += [ s:Expand('%') ]
     endif
 
+    return [opts, files]
+
+endfunction
+
+
+" Add file to index.
+function! GitAdd(expr)
+    let interactive = 0
+
+    let [opts, files] = GitParseOptsAndFiles(a:expr)
+
+    for opt in opts
+        if opt =~ '\v^(-i|-p|--interactive|--patch)$'
+            let interactive = 1
+        end
+    endfor
+
+    let command = ' add ' . join(opts) . ' -- ' . join(files)
+
     if interactive
-        execute '!' . g:git_bin . ' add ' . join(args)
+        execute '!' . g:git_bin . command
     else
-        call GitDoCommand('add ' . join(args))
+        call GitDoCommand(command)
     endif
 endfunction
 
@@ -337,6 +347,7 @@ function! GitCommit(args)
 
     execute printf('%s %sCOMMIT_EDITMSG', g:git_command_edit, git_dir)
     setlocal filetype=gitcommit bufhidden=wipe
+    call cursor( 1, 1 )
     augroup GitCommit
         autocmd BufRead <buffer> setlocal fileencoding=utf-8
         execute printf("autocmd BufUnload <buffer> call GitDoCommand('commit %s --cleanup=strip -F ' . expand('<afile>')) | autocmd! GitCommit * <buffer>", args)
@@ -408,7 +419,7 @@ function! GitBlame()
 
     setlocal modifiable
     silent %s/\d\d\d\d\zs \+\d\+).*//
-    vertical resize 20
+    execute 'vertical resize' g:git_blame_width
     setlocal nomodifiable
     setlocal nowrap scrollbind
 
